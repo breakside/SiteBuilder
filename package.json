@@ -1,0 +1,9 @@
+{
+  "name": "sitebuilder",
+  "private": true,
+  "version": "1.0.0",
+  "devDependencies": {
+    "@breakside/jskit": "file:../JSKit/builds/io.breakside.jskit/debug/jskit",
+    "jshint": "^2.12.0"
+  }
+}

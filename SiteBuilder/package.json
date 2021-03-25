@@ -1,0 +1,11 @@
+{
+  "description": "Development tools for building static websites",
+  "homepage": "https://breakside.io/sitebuilder",
+  "bugs": {
+    "url": "https://github.com/breakside/SiteBuilder/issues"
+  },
+  "repository": "github:breakside/SiteBuilder",
+  "engines": {
+    "node": ">=10.10.0"
+  }
+}
