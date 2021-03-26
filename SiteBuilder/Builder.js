@@ -1,6 +1,7 @@
 // #import Foundation
 // #import "Printer.js"
 // #import DOM
+// #import CSSOM
 "use strict";
 
 JSClass("Builder", JSObject, {
@@ -244,12 +245,34 @@ JSClass("Builder", JSObject, {
                         a.setAttribute("href", url.encodedStringRelativeTo(baseURL));
                     }
                 }
+            },
+
+            style: async function(style){
+                var css = "";
+                for (let i = 0, l = style.childNodes.length; i < l; ++i){
+                    let child = style.childNodes[i];
+                    if (child.nodeType !== DOM.Node.TEXT_NODE){
+                        throw new Error("Expecting only text children of style element");
+                    }
+                    css += child.nodeValue;
+                }
+                let modified = await visitCSS.call(this, css);
+                if (modified !== css){
+                    while (style.childNodes.length > 1){
+                        style.removeChild(style.childNodes[1]);
+                    }
+                    style.childNodes[0].nodeValue = modified;
+                }
             }
 
         };
 
         let visitAttribute = async function(attribute){
-            await visitLocalizableNode.call(this, attribute);
+            if (attribute.name == "style"){
+                attribute.value = await visitCSS.call(this, attribute.value);
+            }else{
+                await visitLocalizableNode.call(this, attribute);
+            }
         };
 
         let visitTextNode = async function(textNode){
@@ -276,6 +299,43 @@ JSClass("Builder", JSObject, {
                     }
                 }
             }
+        };
+
+        let visitCSS = async function(original){
+            var tokenizer = CSSTokenizer.init();
+            var tokens = tokenizer.tokenize(original);
+            var changed = false;
+            for (let i = 0, l = tokens.length; i < l; ++i){
+                let token = tokens[i];
+                if (token instanceof CSSTokenizer.URLToken){
+                    let url = await this.publishResource(token.url, language);
+                    if (url !== null){
+                        changed = true;
+                        token.url = url.encodedStringRelativeTo(baseURL);
+                    }
+                }else if ((token instanceof CSSTokenizer.FunctionToken) && token.name.toLowerCase() == "url"){
+                    let args = [];
+                    ++i;
+                    while (i < l && !(tokens[i] instanceof CSSTokenizer.CloseParenToken)){
+                        if (tokens[i] instanceof CSSTokenizer.StringToken){
+                            let url = await this.publishResource(tokens[i].value, language);
+                            if (url !== null){
+                                changed = true;
+                                tokens[i].value = url.encodedStringRelativeTo(baseURL);
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+            if (changed){
+                var modified = "";
+                for (let token of tokens){
+                    modified += token.toString();
+                }
+                return modified;
+            }
+            return original;
         };
 
         await visitDocument.call(this, domDocument);
@@ -401,6 +461,12 @@ var contentTypeForExtension = function(extension){
             return "application/json";
         case ".pdf":
             return "application/pdf";
+        case ".svg":
+            return "image/svg+xml";
+        case ".png":
+            return "image/png";
+        case ".jpg":
+            return "image/jpeg";
     }
     return "application/octet-stream";
 };
