@@ -51,7 +51,7 @@ JSClass("Builder", JSObject, {
     publish: async function(){
         this.urlsBySourcePath = {};
         this.publishedResources = {};
-        var sitemap = this.site.resources.getMetadata(this.site.info.HTMLSitemap || "Sitemap").value;
+        var sitemap = this.site.resources.getMetadata("global", (this.site.info.HTMLSitemap || "Sitemap") + ".yaml").value;
         for (let path in sitemap.Paths){
             let sourcePath = sitemap.Paths[path];
             this.urlsBySourcePath[sourcePath] = JSURL.initWithString(path.substr(1), this.wwwURL);
@@ -192,7 +192,7 @@ JSClass("Builder", JSObject, {
                 if (icons.length === 0){
                     var iconNames = this.siteIcons(language);
                     for (let name of iconNames){
-                        let metadata = this.site.resources.getLocalizedMetadata(name, language);
+                        let metadata = this.site.resources.getMetadata(language, name);
                         let link = head.ownerDocument.createElement("link");
                         let url = await this.publishResource(name, language);
                         if (url !== null){
@@ -213,6 +213,16 @@ JSClass("Builder", JSObject, {
                     let resourceURL = await this.publishResource(src, language);
                     if (resourceURL !== null){
                         img.setAttribute("src", resourceURL.encodedStringRelativeTo(baseURL));
+                    }
+                }
+            },
+
+            script: async function(script){
+                var src = script.getAttribute("src");
+                if (src !== null){
+                    let resourceURL = await this.publishResource(src, language);
+                    if (resourceURL !== null){
+                        script.setAttribute("src", resourceURL.encodedStringRelativeTo(baseURL));
                     }
                 }
             },
@@ -288,12 +298,12 @@ JSClass("Builder", JSObject, {
                 node.nodeValue = text.substr(1);
             }else if (text[0] == "."){
                 let key = text.substr(1);
-                let table = sourceURL.lastPathComponent.removingFileExtension() + ".strings";
-                let metadata = this.site.resources.getLocalizedMetadata(table, language);
+                let table = sourceURL.lastPathComponent.removingFileExtension() + ".strings.yaml";
+                let metadata = this.site.resources.getMetadata(language, table);
                 if (metadata !== null && (key in metadata.strings)){
                     node.nodeValue = metadata.strings[key];
                 }else{
-                    metadata = this.site.resources.getLocalizedMetadata("Localizable.strings", language);
+                    metadata = this.site.resources.getMetadata(language, "Localizable.strings.yaml");
                     if (metadata !== null && (key in metadata.strings)){
                         node.nodeValue = metadata.strings[key];
                     }
@@ -390,18 +400,28 @@ JSClass("Builder", JSObject, {
         if (this.publishedResources === null){
             this.publishedResources = {};
         }
-        var metadata = this.site.resources.getLocalizedMetadata(name, language);
+        var metadata = this.site.resources.getMetadata(language, name);
         if (metadata !== null){
-            let url = this.publishedResources[metadata.path];
+            let url = this.publishedResources[metadata.hash];
             if (!url){
+                if (metadata.extension === ".css"){
+                    metadata = await this.site.resources.addModifiedCSSAtURL(metadata.sourceURL, language);
+                    for (let reference of metadata.references){
+                        await this.publishResource(reference, language);
+                    }
+                }
                 url = this.wwwURL.appendingPathComponent("_resources", true);
                 url.appendPathComponent(metadata.hash);
-                url.appendFileExtension(metadata.path.fileExtension);
-                this.publishedResources[metadata.path] = url;
-                await this.fileManager.copyItemAtURL(metadata.sourceURL, url);
+                url.appendFileExtension(metadata.extension);
+                this.publishedResources[metadata.hash] = url;
+                if (metadata.sourceURL !== null){
+                    await this.fileManager.copyItemAtURL(metadata.sourceURL, url);
+                }else if (metadata.contents !== null){
+                    await this.fileManager.createFileAtURL(url, metadata.contents);
+                }
                 let path = "/" + url.encodedStringRelativeTo(this.wwwURL);
                 this.site.headersByPath[path] = {
-                    "Content-Type": metadata.mimetype || "application/octet-stream",
+                    "Content-Type": contentTypeForExtension(metadata.extension),
                     "Cache-Control": "max-age=31536000, immutable"
                 };
             }
@@ -415,7 +435,7 @@ JSClass("Builder", JSObject, {
         let setName = this.site.info.HTMLIcon;
         if (setName){
             setName += '.imageset';
-            let metadata = this.site.resources.getLocalizedMetadata('Contents.json', language, setName);
+            let metadata = this.site.resources.getMetadata(language, "Contents.json", setName);
             let contents = metadata.value;
             let images = contents.images;
             for (let i = 0, l = images.length; i < l; ++i){
@@ -467,6 +487,10 @@ var contentTypeForExtension = function(extension){
             return "image/png";
         case ".jpg":
             return "image/jpeg";
+        case ".css":
+            return "text/css";
+        case ".js":
+            return "application/javascript";
     }
     return "application/octet-stream";
 };
