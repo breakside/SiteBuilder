@@ -14,6 +14,7 @@ JSClass("MakeCommand", Command, {
     options: {
         site: {kind: "positional", help: "The html site to build"},
         "builds-root":  {default: null, help: "Root folder for builds"},
+        "build-label": {default: null, help: "A label for this build"},
         debug: {kind: "flag", help: "Run a debug build"},
         watch: {kind: "flag", help: "Watch for file changes and rebuild automatically"},
         'http-port': {valueType: "integer", default: null, help: "The port on which to run a debug server"},
@@ -29,8 +30,9 @@ JSClass("MakeCommand", Command, {
         var builder = Builder.initWithSite(site, this.fileManager);
         builder.debug = this.arguments.debug;
         builder.printer = this.printer;
+        builder.buildLabel = this.arguments["build-label"];
 
-        if (this.arguments['builds-root']){
+        if (this.arguments["builds-root"]){
             builder.buildsRootURL = this.fileManager.urlForPath(this.arguments['builds-root'], this.workingDirectoryURL, true);
         }else{
             builder.buildsRootURL = this.workingDirectoryURL.appendingPathComponent('builds', true);
@@ -109,6 +111,13 @@ JSClass("MakeCommand", Command, {
                     response.end();
                     return;
                 }
+                var redirectLocation = site.redirectsByPath[path];
+                if (redirectLocation){
+                    var redirectURL = JSURL.initWithString(redirectLocation, server.url);
+                    response.writeHead(JSURLResponse.StatusCode.found, {"Location": redirectURL.encodedString});
+                    response.end();
+                    return;
+                }
                 if (path.endsWith("/")){
                     path += site.indexName;
                 }
@@ -141,7 +150,7 @@ JSClass("MakeCommand", Command, {
 
         var server = this.httpServer;
         port = await new Promise(function(resolve, reject){
-            server.listen(port, '127.0.0.1', function(){
+            server.listen(port, function(){
                 resolve(server.address().port);
             });
         });

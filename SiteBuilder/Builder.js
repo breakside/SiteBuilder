@@ -2,6 +2,7 @@
 // #import "Printer.js"
 // #import DOM
 // #import CSSOM
+// #import "Markdown.js"
 "use strict";
 
 JSClass("Builder", JSObject, {
@@ -13,6 +14,8 @@ JSClass("Builder", JSObject, {
     buildsRootURL: null,
     buildURL: null,
     wwwURL: null,
+    s3URL: null,
+    s3Sources: null,
 
     initWithSite: function(site, fileManager){
         this.site = site;
@@ -25,6 +28,8 @@ JSClass("Builder", JSObject, {
         await this.site.open();
         await this.findResources();
         await this.publish();
+        await this.createS3SyncScript();
+        await this.finish();
     },
 
     setup: async function(){
@@ -37,6 +42,7 @@ JSClass("Builder", JSObject, {
         }
         this.buildURL = this.buildsRootURL.appendingPathComponent(this.buildLabel, true);
         this.wwwURL = this.buildURL.appendingPathComponent("www", true);
+        this.s3URL = this.buildURL.appendingPathComponent("s3", true);
         var exists = await this.fileManager.itemExistsAtURL(this.buildURL);
         if (exists){
             this.printer.setStatus("Cleaning old build...");
@@ -51,18 +57,25 @@ JSClass("Builder", JSObject, {
     publish: async function(){
         this.urlsBySourcePath = {};
         this.publishedResources = {};
+        this.s3Sources = [];
         var sitemap = this.site.resources.getMetadata("global", (this.site.info.HTMLSitemap || "Sitemap") + ".yaml").value;
         for (let path in sitemap.Paths){
             let sourcePath = sitemap.Paths[path];
-            this.urlsBySourcePath[sourcePath] = JSURL.initWithString(path.substr(1), this.wwwURL);
+            if (!sourcePath.startsWith("->")){
+                this.urlsBySourcePath[sourcePath] = JSURL.initWithString(path.substr(1), this.wwwURL);
+            }
         }
         for (let path in sitemap.Paths){
             let sourcePath = sitemap.Paths[path];
-            let sourceURL = JSURL.initWithString(sourcePath, this.site.url);
-            if (sourcePath.fileExtension === ".html" ){
-                await this.publishHTMLDocument(sourceURL, path);
+            if (sourcePath.startsWith("->")){
+                await this.publishRedirect(path, sourcePath.substr(2));
             }else{
-                await this.publishFile(sourceURL, path);
+                let sourceURL = JSURL.initWithString(sourcePath, this.site.url);
+                if (sourcePath.fileExtension === ".html" ){
+                    await this.publishHTMLDocument(sourceURL, path);
+                }else{
+                    await this.publishFile(sourceURL, path);
+                }
             }
         }
     },
@@ -86,15 +99,20 @@ JSClass("Builder", JSObject, {
         let parser = new DOMParser();
         let domDocument = parser.parseFromString(html, "text/html");
 
-        this.site.headersByPath[path] = {
+        var headers = {
             "Content-Type": "text/html; charset=utf-8",
             "Cache-Control": "no-cache",
             "Expires": "Thu, 01 Jan 1970 00:00:01 GMT"
         };
+        this.site.headersByPath[path] = headers;
         let publishedURL = JSURL.initWithString(path.substr(1), isDefault ? this.wwwURL : this.wwwURL.appendingPathComponent(language, true));
         if (publishedURL.hasDirectoryPath){
             publishedURL.appendPathComponent(this.site.indexName);
         }
+        this.s3Sources.push({
+            url: publishedURL,
+            headers: headers
+        });
 
         let baseURL = publishedURL;
 
@@ -121,17 +139,6 @@ JSClass("Builder", JSObject, {
                 await fn.call(this, element);
             }
 
-            var ref = element.getAttribute("ref");
-            if (ref !== null){
-                let sourceElement = await this.elementForRef(ref);
-                if (sourceElement !== null){
-                    element.ownerDocument.adoptNode(sourceElement);
-                    element.parentNode.insertBefore(sourceElement, element);
-                    element.parentNode.removeChild(element);
-                    element = sourceElement;
-                }
-            }
-
             var attributes = JSCopy(element.attributes);
             for (let attribute of attributes){
                 await visitAttribute.call(this, attribute);
@@ -150,6 +157,45 @@ JSClass("Builder", JSObject, {
 
         let willVisit = {
 
+            link: async function(link){
+                var href = link.getAttribute("href");
+                var rel = link.getAttribute("rel");
+                var type = link.getAttribute("type");
+                if (rel == "x-sitebuilder-include"){
+                    if (href !== null){
+                        if (type == "text/html"){
+                            let sourceElement = await this.elementForRef(href);
+                            if (sourceElement !== null){
+                                link.ownerDocument.adoptNode(sourceElement);
+                                link.parentNode.insertBefore(sourceElement, link);
+                                link.parentNode.removeChild(link);
+                                await visitElement.call(this, sourceElement);
+                            }
+                        }else if (type == "text/markdown"){
+                            var metadata = this.site.resources.getMetadata(language, href);
+                            var contents = await this.fileManager.contentsAtURL(metadata.sourceURL);
+                            var text = contents.stringByDecodingUTF8();
+                            var markdown = Markdown.initWithString(text);
+                            var builder = this;
+                            markdown.delegate = {
+                                urlForMarkdownLink: function(markdown, link){
+                                    var sourcePath = JSURL.initWithString(link, builder.sourceURL).encodedStringRelativeTo(builder.wwwURL);
+                                    var url = builder.urlsBySourcePath[sourcePath];
+                                    if (url !== undefined){
+                                        link = url.encodedStringRelativeTo(baseURL);
+                                    }
+                                    return JSURL.initWithString(link);
+                                },
+                            };
+                            var elements = markdown.htmlElementsForDocument(link.ownerDocument);
+                            for (var i = 0, l = elements.length; i < l; ++i){
+                                link.parentNode.insertBefore(elements[i], link);
+                            }
+                            link.parentNode.removeChild(link);
+                        }
+                    }
+                }
+            },
         };
 
         let didVisit = {
@@ -360,10 +406,15 @@ JSClass("Builder", JSObject, {
         if (publishedURL.hasDirectoryPath){
             publishedURL.appendPathComponent(this.site.indexName);
         }
-        this.site.headersByPath[path] = {
+        var headers = {
             "Content-Type": contentTypeForExtension(sourceURL.fileExtension),
             "Cache-Control": "max-age=86400",
         };
+        this.site.headersByPath[path] = headers;
+        this.s3Sources.push({
+            url: publishedURL,
+            headers: headers
+        });
         await this.fileManager.copyItemAtURL(sourceURL, publishedURL);
     },
 
@@ -405,7 +456,9 @@ JSClass("Builder", JSObject, {
             let url = this.publishedResources[metadata.hash];
             if (!url){
                 if (metadata.extension === ".css"){
-                    metadata = await this.site.resources.addModifiedCSSAtURL(metadata.sourceURL, language);
+                    if (metadata.sourceURL !== null){
+                        metadata = await this.site.resources.addModifiedCSSAtURL(metadata.sourceURL, language);
+                    }
                     for (let reference of metadata.references){
                         await this.publishResource(reference, language);
                     }
@@ -420,14 +473,23 @@ JSClass("Builder", JSObject, {
                     await this.fileManager.createFileAtURL(url, metadata.contents);
                 }
                 let path = "/" + url.encodedStringRelativeTo(this.wwwURL);
-                this.site.headersByPath[path] = {
+                var headers = {
                     "Content-Type": contentTypeForExtension(metadata.extension),
                     "Cache-Control": "max-age=31536000, immutable"
                 };
+                this.site.headersByPath[path] = headers;
+                this.s3Sources.push({
+                    url: url,
+                    headers: headers
+                });
             }
             return url;
         }
         return null;
+    },
+
+    publishRedirect: async function(path, location){
+        this.site.redirectsByPath[path] = location;
     },
 
     siteIcons: function(language){
@@ -448,13 +510,19 @@ JSClass("Builder", JSObject, {
 
     elementForRef: async function(ref){
         let url = JSURL.initWithString(ref, this.site.url);
-        let id = url.encodedFragment.stringByDecodingUTF8();
+        let id = null;
+        if (url.encodedFragment !== null){
+            id = url.encodedFragment.stringByDecodingUTF8();
+        }
         url.encodedFragment = null;
         let contents = await this.fileManager.contentsAtURL(url);
         let html = contents.stringByDecodingUTF8();
         let parser = new DOMParser();
         let domDocument = parser.parseFromString(html, "text/html");
         let stack = [domDocument.documentElement];
+        if (!id){
+            return stack.pop();
+        }
         while (stack.length > 0){
             let node = stack.shift();
             if (node.nodeType === DOM.Node.ELEMENT_NODE){
@@ -467,6 +535,83 @@ JSClass("Builder", JSObject, {
             }
         }
         return null;
+    },
+
+    createS3SyncScript: async function(){
+        var emptyURL = this.s3URL.appendingPathComponent("empty");
+        await this.fileManager.createFileAtURL(emptyURL, JSData.initWithLength(0));
+        var scriptURL = this.s3URL.appendingPathComponent("sync.sh");
+        var lines = [];
+        lines.push("#!/bin/sh");
+        lines.push("");
+        lines.push("S3_ROOT=$1");
+        lines.push("S3_KEY_PREFIX=/${S3_ROOT#s3://*/}");
+        lines.push("");
+        lines.push("if [ -z \"$S3_ROOT\" ]; then");
+        lines.push("  echo \"Usage: sync.sh <s3-root-destination-uri>\"");
+        lines.push("  exit 1");
+        lines.push("fi");
+        lines.push("");
+        for (let s3Source of this.s3Sources){
+            let source = this.fileManager.pathForURL(s3Source.url);
+            let destination = s3Source.url.encodedStringRelativeTo(this.wwwURL);
+            let cmd = [
+                "aws",
+                "s3",
+                "cp",
+                source,
+                "${S3_ROOT}/%s".sprintf(destination)
+            ];
+            let contentType = s3Source.headers["Content-Type"];
+            if (contentType){
+                cmd.push("--content-type");
+                cmd.push('"%s"'.sprintf(contentType.replace('"', '\\"')));
+            }
+            let cacheControl = s3Source.headers["Cache-Control"];
+            if (cacheControl){
+                cmd.push("--cache-control");
+                cmd.push('"%s"'.sprintf(cacheControl.replace('"', '\\"')));
+            }
+            let expires = s3Source.headers.Expires;
+            if (expires){
+                cmd.push("--expires");
+                cmd.push('"%s"'.sprintf(expires.replace('"', '\\"')));
+            }
+            lines.push(cmd.join(" "));
+        }
+        for (let path in this.site.redirectsByPath){
+            let url = JSURL.initWithString(this.site.redirectsByPath[path]);
+            let cmd = [
+                "aws",
+                "s3",
+                "cp",
+                this.fileManager.pathForURL(emptyURL),
+                "${S3_ROOT}%s".sprintf(path),
+                "--website-redirect"
+            ];
+            if (url.isAbsolute){
+                cmd.push(url.encodedString);
+            }else{
+                cmd.push("${S3_KEY_PREFIX}%s".sprintf(url.encodedString));
+            }
+            lines.push(cmd.join(" "));
+        }
+        lines.push("");
+        var contents = lines.join("\n").utf8();
+        await this.fileManager.createFileAtURL(scriptURL, contents);
+        await this.fileManager.makeExecutableAtURL(scriptURL);
+    },
+
+    finish: async function(){
+        if (!this.debug){
+            var buildParentURL = this.buildURL.removingLastPathComponent();
+            var latestBuildURL = buildParentURL.appendingPathComponent("latest");
+            var exists = await this.fileManager.itemExistsAtURL(latestBuildURL);
+            if (exists){
+                await this.fileManager.removeItemAtURL(latestBuildURL);
+            }
+            await this.fileManager.createSymbolicLinkAtURL(latestBuildURL, this.buildURL);
+        }
     }
 
 });

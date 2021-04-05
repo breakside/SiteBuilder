@@ -11,6 +11,7 @@ JSClass("HTMLSite", JSObject, {
     info: null,
     indexName: null,
     headersByPath: null,
+    redirectsByPath: null,
 
     initWithURL: function(url, fileManager){
         this.fileManager = fileManager || JSFileManager.shared;
@@ -24,6 +25,7 @@ JSClass("HTMLSite", JSObject, {
         this.info = jsyaml.safeLoad(yaml.stringByDecodingUTF8());
         this.indexName = this.info.HTMLIndexName || "index.html";
         this.headersByPath = {};
+        this.redirectsByPath = {};
     }
 
 });

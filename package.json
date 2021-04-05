@@ -3,7 +3,7 @@
   "private": true,
   "version": "1.0.0",
   "devDependencies": {
-    "@breakside/jskit": "file:../JSKit/builds/io.breakside.jskit/debug/jskit",
+    "@breakside/jskit": "^2021.13.0",
     "jshint": "^2.12.0"
   }
 }
