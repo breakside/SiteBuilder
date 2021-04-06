@@ -352,6 +352,9 @@ JSClass("Builder", JSObject, {
 
         let visitLocalizableNode = async function(node){
             var text = node.nodeValue;
+            if (text === null || text === undefined){
+                return;
+            }
             if (text.length === 0){
                 return;
             }
