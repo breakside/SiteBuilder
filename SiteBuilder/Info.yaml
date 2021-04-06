@@ -1,6 +1,6 @@
 JSBundleType: node
 JSBundleIdentifier: io.breakside.SiteBuilder
-JSBundleVersion: 2021.14.1
+JSBundleVersion: 2021.14.2
 JSExecutableName: sitebuilder
 NPMOrganization: breakside
 JSDevelopmentLanguage: en
