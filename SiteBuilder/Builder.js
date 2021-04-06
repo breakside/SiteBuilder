@@ -601,7 +601,7 @@ JSClass("Builder", JSObject, {
                 "s3",
                 "cp",
                 this.fileManager.pathForURL(emptyURL),
-                "${S3_ROOT}%s".sprintf(path),
+                path.endsWith("/") ? "${S3_ROOT}%s%s".sprintf(path, this.site.indexName) : "${S3_ROOT}%s".sprintf(path),
                 "--website-redirect"
             ];
             if (url.isAbsolute){
