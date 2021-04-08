@@ -595,7 +595,7 @@ JSClass("Builder", JSObject, {
                 cmd.push("--expires");
                 cmd.push('"%s"'.sprintf(expires.replace('"', '\\"')));
             }
-            lines.push(cmd.join(" "));
+            lines.push(cmd.join(" ") + " || exit 1");
         }
         for (let path in this.site.redirectsByPath){
             let url = JSURL.initWithString(this.site.redirectsByPath[path]);
@@ -612,7 +612,7 @@ JSClass("Builder", JSObject, {
             }else{
                 cmd.push("${S3_KEY_PREFIX}%s".sprintf(url.encodedString));
             }
-            lines.push(cmd.join(" "));
+            lines.push(cmd.join(" ") + " || exit 1");
         }
         lines.push("");
         var contents = lines.join("\n").utf8();
