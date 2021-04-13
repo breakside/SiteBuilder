@@ -605,13 +605,9 @@ JSClass("Builder", JSObject, {
                 "cp",
                 this.fileManager.pathForURL(emptyURL),
                 path.endsWith("/") ? "${S3_ROOT}%s%s".sprintf(path, this.site.indexName) : "${S3_ROOT}%s".sprintf(path),
-                "--website-redirect"
+                "--website-redirect",
+                url.encodedString
             ];
-            if (url.isAbsolute){
-                cmd.push(url.encodedString);
-            }else{
-                cmd.push("${S3_KEY_PREFIX}%s".sprintf(url.encodedString));
-            }
             lines.push(cmd.join(" ") + " || exit 1");
         }
         lines.push("");
