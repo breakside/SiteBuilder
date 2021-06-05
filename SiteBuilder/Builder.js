@@ -298,7 +298,7 @@ JSClass("Builder", JSObject, {
                             link.setAttribute("href", resourceURL.encodedStringRelativeTo(baseURL));
                         }
                     }else{
-                        var sourcePath = JSURL.initWithString(href, this.sourceURL).encodedStringRelativeTo(this.wwwURL);
+                        var sourcePath = JSURL.initWithString(href, this.wwwURL).encodedStringRelativeTo(this.wwwURL);
                         let url = this.urlsBySourcePath[sourcePath];
                         if (url !== undefined){
                             link.setAttribute("href", url.encodedStringRelativeTo(baseURL));
@@ -310,9 +310,16 @@ JSClass("Builder", JSObject, {
             a: async function(a){
                 var href = a.getAttribute("href");
                 if (href !== null){
-                    var sourcePath = JSURL.initWithString(href, this.sourceURL).encodedStringRelativeTo(this.wwwURL);
+                    var sourceURL = JSURL.initWithString(href, this.wwwURL);
+                    var sourceURLPathOnly = JSURL.initWithURL(sourceURL);
+                    sourceURLPathOnly.query = null;
+                    sourceURLPathOnly.encodedFragment = null;
+                    var sourcePath = sourceURLPathOnly.encodedStringRelativeTo(this.wwwURL);
                     let url = this.urlsBySourcePath[sourcePath];
                     if (url !== undefined){
+                        url = JSURL.initWithURL(url);
+                        url.query = sourceURL.query;
+                        url.encodedFragment = sourceURL.encodedFragment;
                         a.setAttribute("href", url.encodedStringRelativeTo(baseURL));
                     }
                 }
